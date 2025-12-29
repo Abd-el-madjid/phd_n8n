@@ -1,0 +1,440 @@
+{
+  "name": "Ultimate PhD Automation - Complete System",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{"field": "cronExpression", "expression": "* * * * *"}]
+        }
+      },
+      "id": "collector-trigger",
+      "name": "Every Minute: Collect Sources",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COUNT(*) as total FROM phd_sources WHERE status = 'active';",
+        "options": {}
+      },
+      "id": "check-source-count",
+      "name": "Check Source Count",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {"combineOperation": "all"},
+          "conditions": [
+            {
+              "id": "below-500",
+              "leftValue": "={{ $json.total }}",
+              "rightValue": 500,
+              "operator": {"type": "number", "operation": "smaller"}
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "below-500-check",
+      "name": "Below 500?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const queries = [\"PhD positions machine learning 2025\", \"doctoral positions artificial intelligence\", \"PhD vacancies deep learning Europe\", \"PhD openings computer science Canada\", \"doctoral research AI Germany\"];\nconst randomQuery = queries[Math.floor(Math.random() * queries.length)];\nreturn {json: {search_query: randomQuery, timestamp: new Date().toISOString()}};"
+      },
+      "id": "pick-search-query",
+      "name": "Pick Search Query",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "url": "=https://html.duckduckgo.com/html/?q={{ encodeURIComponent($json.search_query) }}",
+        "requestMethod": "GET",
+        "options": {"timeout": 15000}
+      },
+      "id": "search-duckduckgo",
+      "name": "Search DuckDuckGo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "dataPropertyName": "data",
+        "extractionValues": {
+          "values": [
+            {"key": "urls", "cssSelector": ".result__url", "returnValue": "text", "returnArray": true},
+            {"key": "titles", "cssSelector": ".result__title", "returnValue": "text", "returnArray": true}
+          ]
+        }
+      },
+      "id": "extract-urls",
+      "name": "Extract URLs",
+      "type": "n8n-nodes-base.html",
+      "typeVersion": 1.2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const urls = $json.urls || []; const titles = $json.titles || []; const results = []; for(let i=0; i<Math.min(urls.length, 10); i++) { if(urls[i]) { let url = urls[i].trim(); if(!url.startsWith('http')) url = 'https://' + url; results.push({url: url.replace(/^https?:\\/\\//, '').split('/')[0], full_url: url, title: (titles[i] || '').trim(), search_query: $('Pick Search Query').item.json.search_query}); }} return results.map(r => ({json: r}));"
+      },
+      "id": "format-results",
+      "name": "Format Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {"batchSize": 1},
+      "id": "split-urls",
+      "name": "Split URLs",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [1780, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://host.docker.internal:11434/api/generate",
+        "requestMethod": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"model\": \"llama3.2\", \"prompt\": \"Is this a PhD website? URL: {{ $json.full_url }}\\nTitle: {{ $json.title }}\\nReturn JSON: {\\\"is_valid\\\": true/false, \\\"category\\\": \\\"university/job_board/other\\\", \\\"relevance_score\\\": 0-10, \\\"reason\\\": \\\"brief\\\"}\", \"stream\": false, \"format\": \"json\"}"
+      },
+      "id": "validate-ollama",
+      "name": "Validate with Ollama",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2000, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "try { const v = JSON.parse($input.item.json.response); return {json: {...$('Split URLs').item.json, is_valid: v.is_valid || false, category: v.category || 'other', relevance_score: v.relevance_score || 0, validation_reason: v.reason || ''}}; } catch(e) { return {json: {...$('Split URLs').item.json, is_valid: false, relevance_score: 0}}; }"
+      },
+      "id": "parse-validation",
+      "name": "Parse Validation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2220, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {"leftValue": "={{ $json.is_valid }}", "rightValue": true, "operator": {"type": "boolean", "operation": "true"}},
+            {"leftValue": "={{ $json.relevance_score }}", "rightValue": 6, "operator": {"type": "number", "operation": "gte"}}
+          ]
+        }
+      },
+      "id": "is-valid",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [2440, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.full_url }}",
+        "requestMethod": "GET",
+        "options": {"timeout": 10000}
+      },
+      "id": "fetch-page",
+      "name": "Fetch Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2660, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const html = ($input.item.json.data || '').toLowerCase(); const hasPhD = /phd|doctoral/i.test(html); const hasPos = /position|vacancy/i.test(html); let score = 0; if(hasPhD) score += 5; if(hasPos) score += 3; return {json: {...$('Parse Validation').item.json, quality_score: score}};"
+      },
+      "id": "analyze-quality",
+      "name": "Analyze Quality",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2880, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [{"leftValue": "={{ $json.quality_score }}", "rightValue": 5, "operator": {"type": "number", "operation": "gte"}}]
+        }
+      },
+      "id": "quality-check",
+      "name": "Quality ≥5?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [3100, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=INSERT INTO phd_sources (url, full_url, title, category, relevance_score, quality_score, search_query, validation_reason, status) VALUES ('{{ $json.url }}', '{{ $json.full_url }}', '{{ $json.title.replace(/'/g, \"''\") }}', '{{ $json.category }}', {{ $json.relevance_score }}, {{ $json.quality_score }}, '{{ $json.search_query.replace(/'/g, \"''\") }}', '{{ $json.validation_reason.replace(/'/g, \"''\") }}', 'active') ON CONFLICT (url) DO UPDATE SET last_checked = NOW(), times_found = phd_sources.times_found + 1 RETURNING id;"
+      },
+      "id": "save-source",
+      "name": "Save Source",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [3320, 300]
+    },
+    {
+      "parameters": {
+        "rule": {"interval": [{"field": "cronExpression", "expression": "0 9 * * MON"}]}
+      },
+      "id": "match-trigger",
+      "name": "Monday 9AM: Match",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 800]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {"name": "name", "value": "Abd El Madjid Kahoul", "type": "string"},
+            {"name": "email", "value": "abdelmadjid.kahoul@hotmail.com", "type": "string"},
+            {"name": "research", "value": "AI anomaly detection in LTE networks. 93.88% F1-score using CAE, BiLSTM, Transformer, Isolation Forest on Ooredoo data.", "type": "string"}
+          ]
+        }
+      },
+      "id": "set-profile",
+      "name": "Set Profile",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [460, 800]
+    },
+    {
+      "parameters": {
+        "url": "http://embedding-service:8000/embed",
+        "requestMethod": "POST",
+        "sendBody": true,
+        "bodyParameters": {"parameters": [{"name": "text", "value": "={{ $json.research }}"}]}
+      },
+      "id": "embed-candidate",
+      "name": "Embed Candidate",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 800]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, full_url, title FROM phd_sources WHERE status='active' AND quality_score>=6 AND (last_processed IS NULL OR last_processed < NOW() - INTERVAL '7 days') LIMIT 20;"
+      },
+      "id": "fetch-sources",
+      "name": "Fetch Sources",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [900, 800]
+    },
+    {
+      "parameters": {"batchSize": 1},
+      "id": "split-sources",
+      "name": "Split Sources",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [1120, 800]
+    },
+    {
+      "parameters": {"url": "={{ $json.full_url }}", "requestMethod": "GET"},
+      "id": "fetch-source",
+      "name": "Fetch Source",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 800]
+    },
+    {
+      "parameters": {
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"model\": \"llama-3.1-70b-versatile\", \"messages\": [{\"role\": \"system\", \"content\": \"Extract PhD positions from HTML. Return JSON: {\\\"positions\\\": [{\\\"title\\\": \\\"\\\", \\\"university\\\": \\\"\\\", \\\"domain\\\": \\\"\\\"}]}\"}, {\"role\": \"user\", \"content\": \"{{ $json.data.substring(0, 8000) }}\"}], \"temperature\": 0.1, \"response_format\": {\"type\": \"json_object\"}}"
+      },
+      "id": "extract-positions",
+      "name": "Extract Positions",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 800]
+    },
+    {
+      "parameters": {
+        "jsCode": "try { const r = JSON.parse($input.item.json.choices[0].message.content); const pos = r.positions || []; const src = $('Split Sources').item.json; return pos.map(p => ({json: {...p, source_id: src.id, source_url: src.full_url}})); } catch(e) { return []; }"
+      },
+      "id": "parse-positions",
+      "name": "Parse Positions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 800]
+    },
+    {
+      "parameters": {"batchSize": 1},
+      "id": "split-positions",
+      "name": "Split Positions",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [2000, 800]
+    },
+    {
+      "parameters": {
+        "url": "http://embedding-service:8000/embed",
+        "requestMethod": "POST",
+        "sendBody": true,
+        "bodyParameters": {"parameters": [{"name": "text", "value": "={{ $json.title }} {{ $json.domain }} {{ $json.university }}"}]}
+      },
+      "id": "embed-position",
+      "name": "Embed Position",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2220, 800]
+    },
+    {
+      "parameters": {
+        "jsCode": "function cosine(a,b) { let dot=0, na=0, nb=0; for(let i=0; i<a.length; i++) { dot += a[i]*b[i]; na += a[i]*a[i]; nb += b[i]*b[i]; } return dot/(Math.sqrt(na)*Math.sqrt(nb)); } const cv = $('Embed Candidate').item.json.embedding; const pv = $input.item.json.embedding; const sim = cosine(cv, pv); return {json: {...$('Split Positions').item.json, similarity_score: Math.round(sim*100)/100}};"
+      },
+      "id": "calc-similarity",
+      "name": "Calculate Similarity",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2440, 800]
+    },
+    {
+      "parameters": {
+        "conditions": {"conditions": [{"leftValue": "={{ $json.similarity_score }}", "rightValue": 0.65, "operator": {"type": "number", "operation": "gte"}}]}
+      },
+      "id": "sim-filter",
+      "name": "Sim ≥0.65?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [2660, 800]
+    },
+    {
+      "parameters": {
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"model\": \"llama-3.1-70b-versatile\", \"messages\": [{\"role\": \"system\", \"content\": \"Score PhD fit 0-100. Return JSON: {\\\"final_score\\\": 0, \\\"recommendation\\\": \\\"APPLY/SKIP\\\", \\\"justification\\\": \\\"\\\"}\"}, {\"role\": \"user\", \"content\": \"Candidate: AI anomaly detection thesis, 93.88% F1\\nPosition: {{ $json.title }} at {{ $json.university }}\\nSimilarity: {{ $json.similarity_score }}\"}], \"temperature\": 0.3, \"response_format\": {\"type\": \"json_object\"}}"
+      },
+      "id": "evaluate",
+      "name": "Evaluate",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2880, 800]
+    },
+    {
+      "parameters": {
+        "jsCode": "try { const e = JSON.parse($input.item.json.choices[0].message.content); return {json: {...$('Calculate Similarity').item.json, ...e}}; } catch(err) { return {json: {...$('Calculate Similarity').item.json, final_score: 0}}; }"
+      },
+      "id": "parse-eval",
+      "name": "Parse Eval",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3100, 800]
+    },
+    {
+      "parameters": {
+        "conditions": {"conditions": [{"leftValue": "={{ $json.final_score }}", "rightValue": 75, "operator": {"type": "number", "operation": "gte"}}]}
+      },
+      "id": "score-filter",
+      "name": "Score ≥75?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [3320, 800]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=INSERT INTO phd_applications (source_id, title, university, similarity_score, final_score, recommendation, url, status) VALUES ({{ $json.source_id }}, '{{ $json.title.replace(/'/g, \"''\") }}', '{{ $json.university.replace(/'/g, \"''\") }}', {{ $json.similarity_score }}, {{ $json.final_score }}, '{{ $json.recommendation }}', '{{ $json.source_url }}', 'pending') ON CONFLICT (url) DO UPDATE SET final_score = EXCLUDED.final_score RETURNING id;"
+      },
+      "id": "save-app",
+      "name": "Save Application",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [3540, 800]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=UPDATE phd_sources SET last_processed = NOW() WHERE id = {{ $json.source_id }};"
+      },
+      "id": "mark-processed",
+      "name": "Mark Processed",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [3760, 800]
+    },
+    {
+      "parameters": {
+        "conditions": {"conditions": [{"leftValue": "={{ $('Parse Eval').item.json.final_score }}", "rightValue": 85, "operator": {"type": "number", "operation": "gte"}}]}
+      },
+      "id": "priority-check",
+      "name": "Priority ≥85?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.1,
+      "position": [3980, 800]
+    },
+    {
+      "parameters": {
+        "fromEmail": "your-email@gmail.com",
+        "toEmail": "={{ $('Set Profile').item.json.email }}",
+        "subject": "=🎓 High Match: {{ $('Parse Eval').item.json.title }}",
+        "emailType": "html",
+        "message": "=<h2>PhD Match Found!</h2><p><strong>Position:</strong> {{ $('Parse Eval').item.json.title }}</p><p><strong>University:</strong> {{ $('Parse Eval').item.json.university }}</p><p><strong>Score:</strong> {{ $('Parse Eval').item.json.final_score }}/100</p><p><strong>Similarity:</strong> {{ $('Parse Eval').item.json.similarity_score }}</p><p><a href=\"{{ $('Parse Eval').item.json.source_url }}\">View Position</a></p>"
+      },
+      "id": "notify",
+      "name": "Send Notification",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [4200, 800]
+    }
+  ],
+  "connections": {
+    "Every Minute: Collect Sources": {"main": [[{"node": "Check Source Count", "type": "main", "index": 0}]]},
+    "Check Source Count": {"main": [[{"node": "Below 500?", "type": "main", "index": 0}]]},
+    "Below 500?": {"main": [[{"node": "Pick Search Query", "type": "main", "index": 0}]]},
+    "Pick Search Query": {"main": [[{"node": "Search DuckDuckGo", "type": "main", "index": 0}]]},
+    "Search DuckDuckGo": {"main": [[{"node": "Extract URLs", "type": "main", "index": 0}]]},
+    "Extract URLs": {"main": [[{"node": "Format Results", "type": "main", "index": 0}]]},
+    "Format Results": {"main": [[{"node": "Split URLs", "type": "main", "index": 0}]]},
+    "Split URLs": {"main": [[{"node": "Validate with Ollama", "type": "main", "index": 0}]]},
+    "Validate with Ollama": {"main": [[{"node": "Parse Validation", "type": "main", "index": 0}]]},
+    "Parse Validation": {"main": [[{"node": "Valid?", "type": "main", "index": 0}]]},
+    "Valid?": {"main": [[{"node": "Fetch Page", "type": "main", "index": 0}]]},
+    "Fetch Page": {"main": [[{"node": "Analyze Quality", "type": "main", "index": 0}]]},
+    "Analyze Quality": {"main": [[{"node": "Quality ≥5?", "type": "main", "index": 0}]]},
+    "Quality ≥5?": {"main": [[{"node": "Save Source", "type": "main", "index": 0}]]},
+    "Monday 9AM: Match": {"main": [[{"node": "Set Profile", "type": "main", "index": 0}]]},
+    "Set Profile": {"main": [[{"node": "Embed Candidate", "type": "main", "index": 0}]]},
+    "Embed Candidate": {"main": [[{"node": "Fetch Sources", "type": "main", "index": 0}]]},
+    "Fetch Sources": {"main": [[{"node": "Split Sources", "type": "main", "index": 0}]]},
+    "Split Sources": {"main": [[{"node": "Fetch Source", "type": "main", "index": 0}]]},
+    "Fetch Source": {"main": [[{"node": "Extract Positions", "type": "main", "index": 0}]]},
+    "Extract Positions": {"main": [[{"node": "Parse Positions", "type": "main", "index": 0}]]},
+    "Parse Positions": {"main": [[{"node": "Split Positions", "type": "main", "index": 0}]]},
+    "Split Positions": {"main": [[{"node": "Embed Position", "type": "main", "index": 0}]]},
+    "Embed Position": {"main": [[{"node": "Calculate Similarity", "type": "main", "index": 0}]]},
+    "Calculate Similarity": {"main": [[{"node": "Sim ≥0.65?", "type": "main", "index": 0}]]},
+    "Sim ≥0.65?": {"main": [[{"node": "Evaluate", "type": "main", "index": 0}]]},
+    "Evaluate": {"main": [[{"node": "Parse Eval", "type": "main", "index": 0}]]},
+    "Parse Eval": {"main": [[{"node": "Score ≥75?", "type": "main", "index": 0}]]},
+    "Score ≥75?": {"main": [[{"node": "Save Application", "type": "main", "index": 0}]]},
+    "Save Application": {"main": [[{"node": "Mark Processed", "type": "main", "index": 0}]]},
+    "Mark Processed": {"main": [[{"node": "Priority ≥85?", "type": "main", "index": 0}]]},
+    "Priority ≥85?": {"main": [[{"node": "Send Notification", "type": "main", "index": 0}]]}
+  },
+  "pinData": {},
+  "settings": {"executionOrder": "v1"},
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2025-01-02T12:00:00.000Z",
+  "versionId": "1"
+}
