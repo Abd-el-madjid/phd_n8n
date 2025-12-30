@@ -31,6 +31,7 @@ services:
       DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD}
     depends_on:
       - postgres
+      - ollama
     volumes:
       - n8n_data:/home/node/.n8n
     restart: unless-stopped
@@ -42,7 +43,20 @@ services:
       - "8000:8000"
     restart: unless-stopped
 
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   n8n_data:
   embedding_data:
+
+networks:
+  default:
+    name: rava-net
+    driver: bridge
+    
